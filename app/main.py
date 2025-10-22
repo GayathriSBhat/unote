@@ -1,5 +1,7 @@
 # app/main.py
-from fastapi import FastAPI, Depends, HTTPException, status, Request
+from fastapi import FastAPI, Depends, HTTPException, status, Request, Path
+from fastapi.middleware.cors import CORSMiddleware
+import re
 from fastapi.responses import PlainTextResponse, JSONResponse
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
@@ -19,6 +21,14 @@ init_database()
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title=settings.PROJECT_NAME)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # your React/Next.js frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],       # allow all methods (GET, POST, etc.)
+    allow_headers=["*"],       # allow all headers, including Authorization
+)
 
 # -----------------------
 # Homepage: bootstrapping endpoints (backend-only)
@@ -181,13 +191,57 @@ def get_user_notes(
     return notes
 
 
+HEX_RE = re.compile(r'^[0-9a-f]{32}$', re.IGNORECASE)
+
+def _normalize_uuid_input(s: str) -> str:
+    if s is None:
+        return ""
+    s = s.strip()
+    # remove urn prefix if present
+    if s.lower().startswith("urn:uuid:"):
+        s = s.split(":", 2)[-1]
+    # strip '0x' prefix often shown by MySQL hex literals
+    if s.lower().startswith("0x"):
+        s = s[2:]
+    # remove braces and hyphens
+    s = s.strip("{} ").replace("-", "")
+    return s
+
 @app.get("/homepage/notes/{note_id}", response_model=schemas.NoteOut, tags=["notes"])
-def get_note(note_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    note = crud.get_note_by_id(db, note_id, current_user.user_id)
+def get_note(
+    note_id: str = Path(..., description="Note id as UUID (with or without dashes or 0x prefix)"),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    normalized = _normalize_uuid_input(note_id)
+    if not HEX_RE.match(normalized):
+        raise HTTPException(status_code=400, detail="note_id must be a valid UUID (32 hex chars)")
+
+    try:
+        note_uuid = uuid.UUID(hex=normalized)
+        note_id_bin = note_uuid.bytes
+    except ValueError:
+        raise HTTPException(status_code=400, detail="note_id must be a valid UUID")
+
+    note = crud.get_note_by_id(db, note_id_bin, current_user.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
-    return note
 
+    # Defensive handling: SQLAlchemy column might be bytes or memoryview
+    raw_note_id_bytes = bytes(note.note_id) if isinstance(note.note_id, (memoryview, bytearray)) else note.note_id
+    raw_user_id_bytes = bytes(note.user_id) if isinstance(note.user_id, (memoryview, bytearray)) else note.user_id
+
+    # Convert to hex string (no dashes). If you want dashed form, use str(uuid.UUID(bytes=...))
+    payload = {
+        "note_id": uuid.UUID(bytes=raw_note_id_bytes).hex,
+        "user_id": uuid.UUID(bytes=raw_user_id_bytes).hex,
+        "note_title": note.note_title,
+        "note_content": note.note_content,
+        "created_on": note.created_on,
+        "last_update": note.last_update,
+    }
+
+    return payload
 
 # Create a new note
 @app.post("/homepage/notes", response_model=schemas.NoteOut, status_code=201, tags=["notes"])
@@ -224,3 +278,4 @@ def notes_debug_noauth(request: Request):
     print("=== notes-debug-noauth handler reached ===")
     print("Raw headers:", dict(request.headers))
     return {"ok": True, "headers": dict(request.headers)}
+
