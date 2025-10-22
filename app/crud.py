@@ -82,3 +82,11 @@ def update_note(db: Session, note_obj: models.Note, note_in: schemas.NoteUpdate)
     db.refresh(note_obj)
 
     return note_obj
+
+
+def delete_note(db: Session, note_obj: models.Note) -> None:
+    """
+    Permanently delete the given note_obj and commit.
+    """
+    db.delete(note_obj)
+    db.commit()

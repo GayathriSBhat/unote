@@ -289,3 +289,31 @@ def notes_debug_noauth(request: Request):
     print("Raw headers:", dict(request.headers))
     return {"ok": True, "headers": dict(request.headers)}
 
+@app.delete("/homepage/notes/{note_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["notes"])
+def delete_note(
+    note_id: str = Path(..., description="Note id as UUID (with or without dashes or 0x prefix)"),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    # normalize + validate
+    normalized = _normalize_uuid_input(note_id)
+    if not HEX_RE.match(normalized):
+        raise HTTPException(status_code=400, detail="note_id must be a valid UUID (32 hex chars)")
+
+    try:
+        note_uuid = uuid.UUID(hex=normalized)
+        note_id_bin = note_uuid.bytes
+    except ValueError:
+        raise HTTPException(status_code=400, detail="note_id must be a valid UUID")
+
+    # get note and enforce ownership
+    note = crud.get_note_by_id(db, note_id_bin, current_user.user_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found.")
+
+    # perform delete
+    crud.delete_note(db, note)
+
+    # return 204 No Content (FastAPI will handle empty response body)
+    return None
+
