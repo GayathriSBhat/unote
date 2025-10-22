@@ -1,6 +1,8 @@
 from sqlalchemy.orm import Session
 from . import models, schemas, auth
 import uuid
+from datetime import datetime
+
 
 
 # helper to handle UUID bytes <-> hex string
@@ -53,17 +55,30 @@ def get_note_by_id(db: Session, note_id_bin: bytes, user_id_bin: bytes):
     return db.query(models.Note).filter(models.Note.note_id == note_id_bin, models.Note.user_id == user_id_bin).first()
 
 
-def update_note(db: Session, note_obj: models.Note, note_in: schemas.NoteCreate):
-    if note_in.note_title is not None:
-        note_obj.note_title = note_in.note_title
-    if note_in.note_content is not None:
-        note_obj.note_content = note_in.note_content
-    db.add(note_obj)
-    db.commit()
-    db.refresh(note_obj)
-    return note_obj
 
 
 def delete_note(db: Session, note_obj: models.Note):
     db.delete(note_obj)
     db.commit()
+
+def update_note(db: Session, note_obj: models.Note, note_in: schemas.NoteUpdate):
+    """
+    Partially update a Note record.
+    - Only updates fields provided (non-None)
+    - Updates last_update timestamp
+    - Commits and refreshes
+    """
+    if note_in.note_title is not None:
+        note_obj.note_title = note_in.note_title.strip()
+
+    if note_in.note_content is not None:
+        note_obj.note_content = note_in.note_content
+
+    # Always update last_update timestamp
+    note_obj.last_update = datetime.utcnow()
+
+    db.add(note_obj)
+    db.commit()
+    db.refresh(note_obj)
+
+    return note_obj

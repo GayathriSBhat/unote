@@ -1,7 +1,7 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, ConfigDict
 from typing import Optional
 from datetime import datetime
-
+from typing import Optional
 
 class UserCreate(BaseModel):
     user_name: str
@@ -46,3 +46,8 @@ class NoteOut(BaseModel):
 
 class Config:
     orm_mode = True
+
+class NoteUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")   # reject unexpected fields
+    note_title: Optional[str] = None
+    note_content: Optional[str] = None

@@ -1,5 +1,5 @@
 # app/main.py
-from fastapi import FastAPI, Depends, HTTPException, status, Request, Path
+from fastapi import FastAPI, Depends, HTTPException, status, Request, Path, Body
 from fastapi.middleware.cors import CORSMiddleware
 import re
 from fastapi.responses import PlainTextResponse, JSONResponse
@@ -13,6 +13,9 @@ from .config import settings
 from datetime import timedelta
 import uuid
 from .init_db import init_database
+from .schemas import NoteUpdate
+from datetime import datetime
+
 
 # Initialize database before creating tables
 init_database()
@@ -207,31 +210,38 @@ def _normalize_uuid_input(s: str) -> str:
     s = s.strip("{} ").replace("-", "")
     return s
 
-@app.get("/homepage/notes/{note_id}", response_model=schemas.NoteOut, tags=["notes"])
-def get_note(
+
+@app.patch("/homepage/notes/{note_id}", response_model=schemas.NoteOut, tags=["notes"])
+def edit_note(
     note_id: str = Path(..., description="Note id as UUID (with or without dashes or 0x prefix)"),
+    note_in: schemas.NoteUpdate = Body(...),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    # Normalize and validate note_id
     normalized = _normalize_uuid_input(note_id)
     if not HEX_RE.match(normalized):
         raise HTTPException(status_code=400, detail="note_id must be a valid UUID (32 hex chars)")
-
     try:
         note_uuid = uuid.UUID(hex=normalized)
         note_id_bin = note_uuid.bytes
     except ValueError:
         raise HTTPException(status_code=400, detail="note_id must be a valid UUID")
 
+    # Fetch note and enforce ownership
     note = crud.get_note_by_id(db, note_id_bin, current_user.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
 
-    # Defensive handling: SQLAlchemy column might be bytes or memoryview
+    # Perform the partial update via your CRUD helper
+    # crud.update_note should accept schemas.NoteUpdate, apply non-None fields, set last_update, commit, refresh
+    note = crud.update_note(db, note, note_in)
+
+    # Defensive conversion for UUID columns that might be bytes / memoryview
     raw_note_id_bytes = bytes(note.note_id) if isinstance(note.note_id, (memoryview, bytearray)) else note.note_id
     raw_user_id_bytes = bytes(note.user_id) if isinstance(note.user_id, (memoryview, bytearray)) else note.user_id
 
-    # Convert to hex string (no dashes). If you want dashed form, use str(uuid.UUID(bytes=...))
+    # Build response dict (don't mutate ORM in-place)
     payload = {
         "note_id": uuid.UUID(bytes=raw_note_id_bytes).hex,
         "user_id": uuid.UUID(bytes=raw_user_id_bytes).hex,
