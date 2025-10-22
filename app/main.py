@@ -181,9 +181,46 @@ def get_user_notes(
     return notes
 
 
-@app.get("/notes/{note_id}", response_model=schemas.NoteOut, tags=["notes"])
+@app.get("/homepage/notes/{note_id}", response_model=schemas.NoteOut, tags=["notes"])
 def get_note(note_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     note = crud.get_note_by_id(db, note_id, current_user.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
     return note
+
+
+# Create a new note
+@app.post("/homepage/notes", response_model=schemas.NoteOut, status_code=201, tags=["notes"])
+def create_note(
+    request: Request,
+    note_in: schemas.NoteCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+
+    # Debug: print full headers
+    print("Headers:", dict(request.headers))
+    
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    created = crud.create_note(db, current_user.user_id, note_in)
+
+    # Convert binary UUID bytes to hex string for JSON response
+    # If your model stores bytes in created.note_id / created.user_id
+    created.note_id = uuid.UUID(bytes=created.note_id).hex
+    created.user_id = uuid.UUID(bytes=created.user_id).hex
+    
+    return created
+
+# in app/main.py (temporary)
+@app.post("/homepage/notes-debug-noauth")
+def notes_debug_noauth(request: Request):
+    # prints to the uvicorn console
+    print("=== notes-debug-noauth handler reached ===")
+    print("Raw headers:", dict(request.headers))
+    return {"ok": True, "headers": dict(request.headers)}
